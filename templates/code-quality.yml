@@ -1,0 +1,95 @@
+name: Code Quality
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Layer Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install codelint
+        run: npm install -g github:voxServalG/codelint
+
+      - name: Run check
+        id: check
+        run: |
+          codelint check --json > report.json || true
+          echo "errors=$(jq '.errors' report.json)" >> $GITHUB_OUTPUT
+          echo "warnings=$(jq '.warnings' report.json)" >> $GITHUB_OUTPUT
+          echo "layer=$(jq '.layer_violations' report.json)" >> $GITHUB_OUTPUT
+          echo "size=$(jq '.size_violations' report.json)" >> $GITHUB_OUTPUT
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layer-check-report
+          path: report.json
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('report.json', 'utf8'));
+
+            let body = `## Layer Check\n\n`;
+            body += `| 检查 | 结果 |\n`;
+            body += `|------|------|\n`;
+            body += `| Layer 方向违规 | ${report.layer_violations} |\n`;
+            body += `| 文件大小违规 | ${report.size_violations} |\n`;
+            body += `| Errors | ${report.errors} |\n`;
+            body += `| Warnings | ${report.warnings} |\n\n`;
+
+            if (report.results.length > 0) {
+              body += `### 详情\n\n`;
+              for (const r of report.results.slice(0, 20)) {
+                const icon = r.severity === "error" ? "❌" : "⚠️";
+                body += `- ${icon} [${r.rule}] ${r.file}`;
+                if (r.line) body += `:${r.line}`;
+                body += `\n  ${r.message}\n`;
+              }
+              if (report.results.length > 20) {
+                body += `\n*(已截断前 20 条，共 ${report.results.length} 条)*\n`;
+              }
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body.substring(0, 65536)
+            });
+
+      - name: Fail if errors
+        if: fromJSON(steps.check.outputs.errors) > 0
+        run: |
+          echo "::error::Layer check found ${{ steps.check.outputs.errors }} errors"
+          echo "::error::Layer violations: ${{ steps.check.outputs.layer }}, Size violations: ${{ steps.check.outputs.size }}"
+          exit 1

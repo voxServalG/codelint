@@ -1,0 +1,19 @@
+{
+  "name": "codelint",
+  "version": "1.0.0",
+  "description": "Python 代码层级检查工具 — 检查依赖方向与文件大小",
+  "type": "module",
+  "bin": {
+    "codelint": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "deploy/",
+    "python/",
+    "templates/"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
